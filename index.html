@@ -255,6 +255,73 @@
       return a;
     }
 
+    // ── SOUND ENGINE ─────────────────────────────────────────────────────────
+    const audioCtx = { current: null };
+    function getCtx() {
+      if (!audioCtx.current) {
+        audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.current.state === 'suspended') {
+        audioCtx.current.resume();
+      }
+      return audioCtx.current;
+    }
+
+    // Karplus-Strong plucked string synthesis with optional warmth filter
+    function pluckString(ctx, freq, volume, startTime, decay, cutoff) {
+      const sr  = ctx.sampleRate;
+      const len = Math.round(sr / freq);
+      const dur = Math.ceil(sr * 2.8);
+
+      // Seed buffer with white noise
+      const seed = new Float32Array(len);
+      for (let i = 0; i < len; i++) seed[i] = Math.random() * 2 - 1;
+
+      // Run Karplus-Strong feedback loop into output buffer
+      const out  = ctx.createBuffer(1, dur, sr);
+      const data = out.getChannelData(0);
+      const ring = seed.slice();
+      for (let i = 0; i < dur; i++) {
+        const idx  = i % len;
+        data[i]    = ring[idx];
+        ring[idx]  = decay * 0.5 * (ring[idx] + ring[(idx + 1) % len]);
+      }
+
+      const src   = ctx.createBufferSource();
+      const gain  = ctx.createGain();
+      const filt  = ctx.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.value = cutoff || 8000;
+
+      src.buffer = out;
+      gain.gain.setValueAtTime(volume, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 2.5);
+      src.connect(filt); filt.connect(gain); gain.connect(ctx.destination);
+      src.start(startTime); src.stop(startTime + 2.6);
+    }
+
+    // Correct — warm fingerpicked G major arpeggio, rolled slowly with treble rolled off
+    function playCorrect() {
+      const ctx = getCtx();
+      // G3 B3 D4 G4 — unhurried strum, lowpass keeps it cosy
+      [[196.00, 0],
+       [246.94, 0.09],
+       [293.66, 0.18],
+       [392.00, 0.28]].forEach(([freq, offset]) => {
+        pluckString(ctx, freq, 0.52, ctx.currentTime + offset, 0.998, 2200);
+      });
+    }
+
+    // Wrong — gentle descending minor third, like a quiet "not quite"
+    function playWrong() {
+      const ctx = getCtx();
+      // D3 → B2 — two notes, slightly muted but not a thud
+      [[146.83, 0],
+       [123.47, 0.12]].forEach(([freq, offset]) => {
+        pluckString(ctx, freq, 0.45, ctx.currentTime + offset, 0.972, 1400);
+      });
+    }
+
     function formatTime(ms) {
       const s = Math.floor(ms / 1000);
       const m = Math.floor(s / 60);
@@ -528,8 +595,10 @@
 
       function pick(opt) {
         if (revealed) return;
+        const correct = opt === question.answer;
         setSelected(opt); setRevealed(true);
-        setTimeout(() => onAnswer(opt === question.answer), tweaks.autoAdvanceDelay * 1000);
+        correct ? playCorrect() : playWrong();
+        setTimeout(() => onAnswer(correct), tweaks.autoAdvanceDelay * 1000);
       }
 
       const getState = opt => {
@@ -554,11 +623,7 @@
             borderLeft: '3px solid var(--rose)', borderRadius: 12,
             padding: '20px 24px', marginBottom: 16,
           }}>
-            {tweaks.showEraBadges && question.era && (
-              <div style={{ marginBottom: 10 }}>
-                <EraBadge era={question.era} />
-              </div>
-            )}
+
             <p style={{
               fontFamily: "'Playfair Display',serif", fontStyle: 'italic',
               fontSize: tweaks.lyricFontSize, lineHeight: 1.65,
@@ -582,9 +647,10 @@
     }
 
     // ── RESULTS SCREEN ───────────────────────────────────────────────────────
-    function ResultsScreen({ score, total, questions, results, elapsedMs, onRestart }) {
+    function ResultsScreen({ score, total, questions, results, elapsedMs, onRestart, onLeaderboard }) {
       const pct = Math.round((score / total) * 100);
       const [hov, setHov] = useState(false);
+      const [hovLb, setHovLb] = useState(false);
       const verdict =
         pct === 100 ? { label: 'Perfect Swiftie',                       sub: 'Taylor would be so proud of you.',                icon: '✨' } :
         pct >= 80   ? { label: 'True Believer',                          sub: "You've clearly been listening on repeat.",         icon: '🌟' } :
@@ -667,16 +733,32 @@
             </div>
           </div>
 
-          <button onClick={onRestart}
-            onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-            style={{
-              background: `linear-gradient(135deg,${hov?'var(--rose-dim),var(--purple-dim)':'var(--rose),var(--purple)'})`,
-              border:'none', borderRadius:12, padding:'14px 40px',
-              color:'#fff', fontFamily:"'DM Sans',sans-serif", fontSize:15, fontWeight:600, cursor:'pointer',
-              transition:'all 0.2s ease', transform: hov?'translateY(-2px)':'none',
-              boxShadow: hov?'0 8px 24px oklch(60% 0.18 10/0.42)':'0 4px 12px oklch(60% 0.18 10/0.25)',
-            }}
-          >Play Again</button>
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12 }}>
+            <button onClick={onRestart}
+              onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+              style={{
+                background: `linear-gradient(135deg,${hov?'var(--rose-dim),var(--purple-dim)':'var(--rose),var(--purple)'})`,
+                border:'none', borderRadius:12, padding:'14px 40px',
+                color:'#fff', fontFamily:"'DM Sans',sans-serif", fontSize:15, fontWeight:600, cursor:'pointer',
+                transition:'all 0.2s ease', transform: hov?'translateY(-2px)':'none',
+                boxShadow: hov?'0 8px 24px oklch(60% 0.18 10/0.42)':'0 4px 12px oklch(60% 0.18 10/0.25)',
+                width: '100%', maxWidth: 240,
+              }}
+            >Play Again</button>
+
+            <button onClick={onLeaderboard}
+              onMouseEnter={() => setHovLb(true)} onMouseLeave={() => setHovLb(false)}
+              style={{
+                background: 'transparent',
+                border: `1px solid ${hovLb ? 'var(--purple)' : 'var(--border)'}`,
+                borderRadius:12, padding:'12px 40px',
+                color: hovLb ? 'var(--purple)' : 'var(--text-muted)',
+                fontFamily:"'DM Sans',sans-serif", fontSize:15, fontWeight:600, cursor:'pointer',
+                transition:'all 0.2s ease', transform: hovLb?'translateY(-2px)':'none',
+                width: '100%', maxWidth: 240,
+              }}
+            >✦ View Leaderboard</button>
+          </div>
         </div>
       );
     }
@@ -1049,6 +1131,7 @@
               score={score} total={questions.length}
               questions={questions} results={results}
               elapsedMs={elapsedMs} onRestart={startGame}
+              onLeaderboard={() => setScreen('leaderboard')}
             />
           )}
 
