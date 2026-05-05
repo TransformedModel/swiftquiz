@@ -1,0 +1,9 @@
+# Firebase credentials — never commit
+firebase-config.js
+
+# Generated files (optional)
+lyrics/
+
+# Design scratch files (optional)
+cld-index.html
+cld-tweaks-panel.jsx
