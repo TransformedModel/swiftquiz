@@ -383,7 +383,7 @@
         if (cnt < MAX_PER_SONG) { selected.push(s); songCount[s.song] = cnt + 1; }
       }
 
-      return selected.map(snippet => {
+      const quiz = selected.map(snippet => {
         const wrongs = shuffle(allTitles.filter(t => t !== snippet.song)).slice(0, 5);
         return {
           lyric:   snippet.lyric,
@@ -392,6 +392,9 @@
           options: shuffle([snippet.song, ...wrongs]),
         };
       });
+
+      console.table(quiz.map((q, i) => ({ '#': i + 1, answer: q.answer, era: q.era })));
+      return quiz;
     }
 
     // ── TWEAKS HOOK ──────────────────────────────────────────────────────────
