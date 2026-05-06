@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1025"/>
+      <stop offset="100%" stop-color="#0f0a1a"/>
+    </linearGradient>
+    <linearGradient id="txt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e8607a"/>
+      <stop offset="100%" stop-color="#d4a843"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+  <text
+    x="16" y="22"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="16"
+    font-weight="700"
+    text-anchor="middle"
+    fill="url(#txt)"
+    letter-spacing="-0.5"
+  >TS</text>
+</svg>
