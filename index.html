@@ -83,6 +83,10 @@
       from { opacity: 0; transform: scale(0.94); }
       to   { opacity: 1; transform: scale(1); }
     }
+    @keyframes lbHighlight {
+      0%,100% { box-shadow: 0 0 0 2px oklch(72% 0.18 10 / 0.5); }
+      50%      { box-shadow: 0 0 22px 4px oklch(72% 0.18 10 / 0.8); }
+    }
 
     /* ── Tweaks panel (from cld-tweaks-panel.jsx) ──────────────── */
     .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
@@ -298,6 +302,45 @@
       gain.gain.exponentialRampToValueAtTime(0.001, startTime + 2.5);
       src.connect(filt); filt.connect(gain); gain.connect(ctx.destination);
       src.start(startTime); src.stop(startTime + 2.6);
+    }
+
+    // Applause — filtered noise that swells and fades
+    function playApplause() {
+      const ctx = getCtx();
+      const sr  = ctx.sampleRate;
+      const dur = 3.8;
+      const buf = ctx.createBuffer(2, sr * dur, sr);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+
+      // Shape into crowd-clap texture with two bandpass layers
+      const bp1 = ctx.createBiquadFilter();
+      bp1.type = 'bandpass'; bp1.frequency.value = 1800; bp1.Q.value = 0.7;
+      const bp2 = ctx.createBiquadFilter();
+      bp2.type = 'bandpass'; bp2.frequency.value = 3400; bp2.Q.value = 1.1;
+      const hp  = ctx.createBiquadFilter();
+      hp.type  = 'highpass'; hp.frequency.value = 600;
+
+      const gain = ctx.createGain();
+      const t    = ctx.currentTime;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.55, t + 0.35);   // quick swell
+      gain.gain.setValueAtTime(0.55, t + 1.6);             // sustain
+      gain.gain.linearRampToValueAtTime(0, t + dur);        // fade out
+
+      src.connect(hp); hp.connect(bp1); bp1.connect(gain);
+      // second layer slightly offset for density
+      const src2 = ctx.createBufferSource();
+      src2.buffer = buf;
+      src2.connect(hp); hp.connect(bp2); bp2.connect(gain);
+      gain.connect(ctx.destination);
+
+      src.start(t); src.stop(t + dur + 0.1);
+      src2.start(t + 0.04); src2.stop(t + dur + 0.1);
     }
 
     // Correct — warm fingerpicked G major arpeggio, rolled slowly with treble rolled off
@@ -961,9 +1004,17 @@
     }
 
     // ── LEADERBOARD SCREEN ────────────────────────────────────────────────────
-    function LeaderboardScreen({ entries, loading, firebaseConnected, onBack, onRestart }) {
+    function LeaderboardScreen({ entries, loading, firebaseConnected, onBack, onRestart, highlightName }) {
       const [hov, setHov] = useState(false);
       const medals = ['🥇','🥈','🥉'];
+      const myRef  = useRef(null);
+
+      // Scroll to the user's own entry once entries load
+      useEffect(() => {
+        if (highlightName && myRef.current) {
+          setTimeout(() => myRef.current?.scrollIntoView({ behavior:'smooth', block:'center' }), 400);
+        }
+      }, [entries, highlightName]);
       return (
         <div style={{
           background:'var(--surface)', border:'1px solid var(--border)',
@@ -1006,22 +1057,28 @@
                 No perfect scores yet — be the first!
               </p>
             )}
-            {!loading && entries.map((e,i) => (
-              <div key={i} style={{
-                display:'flex', alignItems:'center', gap:14,
-                background: i===0?'oklch(22% 0.08 65)':'var(--bg2)',
-                border:`1px solid ${i===0?'oklch(78% 0.14 65/0.3)':'var(--border)'}`,
-                borderRadius:12, padding:'12px 16px',
-              }}>
-                <span style={{ fontSize:i<3?20:14, width:28, textAlign:'center', flexShrink:0, color:i<3?undefined:'var(--text-dim)', fontWeight:600 }}>
-                  {i<3 ? medals[i] : `${i+1}`}
-                </span>
-                <span style={{ flex:1, fontSize:14, fontWeight:500, color:i===0?'var(--gold)':'var(--text)' }}>{e.name}</span>
-                <span style={{ fontFamily:"'Playfair Display',serif", fontStyle:'italic', fontSize:16, color:i===0?'var(--gold)':'var(--text-muted)', fontVariantNumeric:'tabular-nums' }}>
-                  {formatTime(e.timeMs)}
-                </span>
-              </div>
-            ))}
+            {!loading && entries.map((e,i) => {
+              const isMe = highlightName && e.name === highlightName;
+              return (
+                <div key={i} ref={isMe ? myRef : null} style={{
+                  display:'flex', alignItems:'center', gap:14,
+                  background: isMe ? 'oklch(20% 0.08 10)' : i===0 ? 'oklch(22% 0.08 65)' : 'var(--bg2)',
+                  border:`1.5px solid ${isMe ? 'var(--rose)' : i===0 ? 'oklch(78% 0.14 65/0.3)' : 'var(--border)'}`,
+                  borderRadius:12, padding:'12px 16px',
+                  animation: isMe ? 'lbHighlight 1.6s ease-in-out 3' : 'none',
+                }}>
+                  <span style={{ fontSize:i<3?20:14, width:28, textAlign:'center', flexShrink:0, color:i<3?undefined:'var(--text-dim)', fontWeight:600 }}>
+                    {i<3 ? medals[i] : `${i+1}`}
+                  </span>
+                  <span style={{ flex:1, fontSize:14, fontWeight:500, color: isMe ? 'var(--rose)' : i===0 ? 'var(--gold)' : 'var(--text)' }}>
+                    {e.name}{isMe && <span style={{ fontSize:11, color:'var(--rose-dim)', marginLeft:8 }}>← you</span>}
+                  </span>
+                  <span style={{ fontFamily:"'Playfair Display',serif", fontStyle:'italic', fontSize:16, color: isMe ? 'var(--rose)' : i===0 ? 'var(--gold)' : 'var(--text-muted)', fontVariantNumeric:'tabular-nums' }}>
+                    {formatTime(e.timeMs)}
+                  </span>
+                </div>
+              );
+            })}
           </div>
 
           <button onClick={onRestart}
@@ -1039,6 +1096,82 @@
       );
     }
 
+    // ── CONFETTI ─────────────────────────────────────────────────────────────
+    function Confetti({ active }) {
+      const canvasRef = useRef(null);
+      const rafRef    = useRef(null);
+
+      useEffect(() => {
+        if (!active) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        canvas.width  = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const COLORS = [
+          '#e8607a','#d4a843','#a07de0',   // rose, gold, purple
+          '#f0a0b0','#f8d870','#c4a0f0',   // pastel variants
+          '#ffffff','#ffdfeb',              // white, blush
+        ];
+        const particles = Array.from({ length: 160 }, () => ({
+          x:    Math.random() * canvas.width,
+          y:    -20 - Math.random() * 140,
+          w:    5 + Math.random() * 9,
+          h:    3 + Math.random() * 5,
+          color: COLORS[Math.floor(Math.random() * COLORS.length)],
+          vx:   (Math.random() - 0.5) * 3.5,
+          vy:   2.5 + Math.random() * 3,
+          rot:  Math.random() * Math.PI * 2,
+          rotV: (Math.random() - 0.5) * 0.18,
+          opacity: 1,
+        }));
+
+        const startTs = performance.now();
+        const FADE_AT = 3200;
+        const END_AT  = 5500;
+
+        function tick(ts) {
+          const age = ts - startTs;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          let anyVisible = false;
+          for (const p of particles) {
+            p.x   += p.vx;
+            p.y   += p.vy;
+            p.vy  += 0.06;  // gravity
+            p.rot += p.rotV;
+            if (age > FADE_AT) p.opacity = Math.max(0, p.opacity - 0.012);
+            if (p.y < canvas.height + 20 && p.opacity > 0) anyVisible = true;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rot);
+            ctx.globalAlpha = p.opacity;
+            ctx.fillStyle   = p.color;
+            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+            ctx.restore();
+          }
+          if (anyVisible && age < END_AT) {
+            rafRef.current = requestAnimationFrame(tick);
+          } else {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        }
+
+        rafRef.current = requestAnimationFrame(tick);
+        return () => {
+          if (rafRef.current) cancelAnimationFrame(rafRef.current);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        };
+      }, [active]);
+
+      return (
+        <canvas ref={canvasRef} style={{
+          position:'fixed', inset:0, width:'100vw', height:'100vh',
+          pointerEvents:'none', zIndex:200,
+        }} />
+      );
+    }
+
     // ── APP ──────────────────────────────────────────────────────────────────
     const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
       "autoAdvanceDelay": 1,
@@ -1047,17 +1180,19 @@
     }/*EDITMODE-END*/;
 
     function App() {
-      const [tweaks, setTweak]   = useTweaks(TWEAK_DEFAULTS);
-      const [screen, setScreen]  = useState('welcome'); // welcome | quiz | name-entry | results | leaderboard
-      const [questions, setQ]    = useState([]);
-      const [current, setCurrent]= useState(0);
-      const [results, setResults]= useState([]);
-      const [score, setScore]    = useState(0);
-      const [startTime, setStart]= useState(null);
-      const [elapsedMs, setMs]   = useState(0);
-      const [lbEntries, setLb]   = useState([]);
-      const [lbLoading, setLbL]  = useState(false);
-      const lbUnsubRef           = useRef(null);
+      const [tweaks, setTweak]      = useTweaks(TWEAK_DEFAULTS);
+      const [screen, setScreen]     = useState('welcome'); // welcome | quiz | name-entry | results | leaderboard
+      const [questions, setQ]       = useState([]);
+      const [current, setCurrent]   = useState(0);
+      const [results, setResults]   = useState([]);
+      const [score, setScore]       = useState(0);
+      const [startTime, setStart]   = useState(null);
+      const [elapsedMs, setMs]      = useState(0);
+      const [lbEntries, setLb]      = useState([]);
+      const [lbLoading, setLbL]     = useState(false);
+      const [confetti, setConfetti] = useState(false);
+      const [myName, setMyName]     = useState(null);
+      const lbUnsubRef              = useRef(null);
 
       // Subscribe to leaderboard when on that screen; unsubscribe on leave
       useEffect(() => {
@@ -1080,7 +1215,7 @@
 
       function startGame() {
         setQ(buildQuiz()); setCurrent(0); setResults([]); setScore(0);
-        setStart(Date.now()); setScreen('quiz');
+        setStart(Date.now()); setConfetti(false); setMyName(null); setScreen('quiz');
       }
 
       function handleAnswer(correct) {
@@ -1089,7 +1224,9 @@
         setResults(newResults); setScore(newScore);
         if (current + 1 >= questions.length) {
           setMs(Date.now() - startTime);
-          setTimeout(() => setScreen(newScore === questions.length ? 'name-entry' : 'results'), 300);
+          const perfect = newScore === questions.length;
+          if (perfect) { setConfetti(true); playApplause(); }
+          setTimeout(() => setScreen(perfect ? 'name-entry' : 'results'), 300);
         } else {
           setCurrent(c => c + 1);
         }
@@ -1097,6 +1234,7 @@
 
       async function handleNameSubmit(name) {
         if (window.Leaderboard) await window.Leaderboard.addEntry({ name, timeMs: elapsedMs });
+        setMyName(name);
         setScreen('leaderboard');
       }
 
@@ -1149,8 +1287,11 @@
               firebaseConnected={!!window.Leaderboard}
               onBack={() => setScreen('welcome')}
               onRestart={startGame}
+              highlightName={myName}
             />
           )}
+
+          <Confetti active={confetti} />
 
           <TweaksPanel title="Quiz Tweaks">
             <TweakSection label="Gameplay" />
