@@ -43,7 +43,7 @@ if (!cfg || cfg.apiKey === "YOUR_API_KEY") {
   const LIMIT = 50;
 
   // ── Leaderboard API ─────────────────────────────────────────
-  window.Leaderboard = {
+  window.Leaderboard = { _ready: true,
 
     /**
      * Add a perfect-score entry to the leaderboard.
@@ -88,4 +88,5 @@ if (!cfg || cfg.apiKey === "YOUR_API_KEY") {
   };
 
   console.info("✅ SwiftQuiz: Firebase leaderboard connected.");
+  window.dispatchEvent(new CustomEvent('firebase-ready'));
 }
