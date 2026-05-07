@@ -1,0 +1,16 @@
+name = "swiftquiz-analytics"
+main = "index.js"
+compatibility_date = "2024-11-01"
+
+# ── Deploy ────────────────────────────────────────────────────
+# wrangler deploy
+#
+# ── Secrets (run each line once, paste value when prompted) ───
+# wrangler secret put FIREBASE_PROJECT_ID
+# wrangler secret put FIREBASE_CLIENT_EMAIL
+# wrangler secret put FIREBASE_PRIVATE_KEY
+#
+# Get FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY from:
+#   Firebase Console → Project Settings → Service accounts
+#   → Generate new private key → download JSON
+#   Copy client_email and private_key from that file.

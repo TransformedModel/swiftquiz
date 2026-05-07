@@ -26,6 +26,40 @@
   <!-- Firebase config (must load before firebase.js module) -->
   <script src="firebase-config.js"></script>
 
+  <!-- Analytics client — fires before React renders -->
+  <script>
+    (function () {
+      // ── Update this after deploying the Cloudflare Worker ──
+      const WORKER_URL = 'https://swiftquiz-analytics.niharikakohli29.workers.dev/log';
+
+      // One session ID per page load
+      const SESSION_ID = (crypto.randomUUID
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36));
+
+      function log(event, data) {
+        const payload = JSON.stringify({ sessionId: SESSION_ID, event, data: data || {} });
+        // Use sendBeacon for abandon events (fires even during page unload)
+        if (event === 'quiz_abandon' && navigator.sendBeacon) {
+          navigator.sendBeacon(WORKER_URL, new Blob([payload], { type: 'application/json' }));
+        } else {
+          fetch(WORKER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+          }).catch(() => {}); // never surface analytics errors
+        }
+      }
+
+      // Fire immediately on load
+      log('page_view');
+
+      // Expose globally for React app
+      window.Analytics = { log, sessionId: SESSION_ID };
+    })();
+  </script>
+
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1196,6 +1230,10 @@
       const [myName, setMyName]       = useState(null);
       const [fbReady, setFbReady]     = useState(!!window.Leaderboard);
       const lbUnsubRef                = useRef(null);
+      // Analytics refs — use refs so beforeunload always sees current values
+      const quizActiveRef             = useRef(false);
+      const currentRef                = useRef(0);
+      const questionStartRef          = useRef(null);
 
       // firebase.js is a deferred module — listen for it to finish initialising
       useEffect(() => {
@@ -1203,6 +1241,16 @@
         const onReady = () => setFbReady(true);
         window.addEventListener('firebase-ready', onReady);
         return () => window.removeEventListener('firebase-ready', onReady);
+      }, []);
+
+      // Fire quiz_abandon via sendBeacon when the tab is closed mid-quiz
+      useEffect(() => {
+        function onUnload() {
+          if (!quizActiveRef.current) return;
+          window.Analytics?.log('quiz_abandon', { lastQuestion: currentRef.current });
+        }
+        window.addEventListener('beforeunload', onUnload);
+        return () => window.removeEventListener('beforeunload', onUnload);
       }, []);
 
       // Subscribe to leaderboard when on that screen; unsubscribe on leave
@@ -1226,26 +1274,51 @@
       }, [screen, fbReady]);
 
       function startGame() {
-        setQ(buildQuiz()); setCurrent(0); setResults([]); setScore(0);
+        const quiz = buildQuiz();
+        setQ(quiz); setCurrent(0); setResults([]); setScore(0);
         setStart(Date.now()); setConfetti(false); setMyName(null); setScreen('quiz');
+        quizActiveRef.current    = true;
+        currentRef.current       = 0;
+        questionStartRef.current = Date.now();
+        window.Analytics?.log('quiz_start', { totalQuestions: quiz.length });
       }
 
       function handleAnswer(correct) {
-        const newResults = [...results, correct ? 'correct' : 'wrong'];
-        const newScore   = score + (correct ? 1 : 0);
+        const msOnQuestion = Date.now() - (questionStartRef.current || Date.now());
+        const newResults   = [...results, correct ? 'correct' : 'wrong'];
+        const newScore     = score + (correct ? 1 : 0);
         setResults(newResults); setScore(newScore);
+
+        window.Analytics?.log('question_answered', {
+          questionIndex : current,
+          correct,
+          msOnQuestion,
+          runningScore  : newScore,
+        });
+
         if (current + 1 >= questions.length) {
-          setMs(Date.now() - startTime);
+          const totalMs = Date.now() - startTime;
+          setMs(totalMs);
+          quizActiveRef.current = false;
           const perfect = newScore === questions.length;
           if (perfect) { setConfetti(true); playApplause(); }
+          window.Analytics?.log('quiz_complete', {
+            score    : newScore,
+            total    : questions.length,
+            perfect,
+            totalMs,
+          });
           setTimeout(() => setScreen(perfect ? 'name-entry' : 'results'), 300);
         } else {
           setCurrent(c => c + 1);
+          currentRef.current       = current + 1;
+          questionStartRef.current = Date.now();
         }
       }
 
       async function handleNameSubmit(name) {
         if (window.Leaderboard) await window.Leaderboard.addEntry({ name, timeMs: elapsedMs });
+        window.Analytics?.log('name_submitted', { timeMs: elapsedMs });
         setMyName(name);
         setScreen('leaderboard');
       }

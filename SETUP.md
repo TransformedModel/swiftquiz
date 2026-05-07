@@ -80,6 +80,12 @@ service cloud.firestore {
       // Nobody can edit or delete entries
       allow update, delete: if false;
     }
+
+    // Analytics events — written only by the Worker (service account bypasses rules)
+    match /events/{doc} {
+      allow read, write: if false;
+    }
+    }
   }
 }
 ```
