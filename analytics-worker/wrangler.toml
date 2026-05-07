@@ -9,6 +9,7 @@ compatibility_date = "2024-11-01"
 # wrangler secret put FIREBASE_PROJECT_ID
 # wrangler secret put FIREBASE_CLIENT_EMAIL
 # wrangler secret put FIREBASE_PRIVATE_KEY
+# wrangler secret put REPORT_TOKEN          ← choose any long random string
 #
 # Get FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY from:
 #   Firebase Console → Project Settings → Service accounts
