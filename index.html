@@ -29,34 +29,51 @@
   <!-- Analytics client — fires before React renders -->
   <script>
     (function () {
-      // ── Update this after deploying the Cloudflare Worker ──
       const WORKER_URL = 'https://swiftquiz-analytics.niharikakohli29.workers.dev/log';
 
-      // One session ID per page load
-      const SESSION_ID = (crypto.randomUUID
-        ? crypto.randomUUID()
-        : Math.random().toString(36).slice(2) + Date.now().toString(36));
+      // ── Persistent visitor ID (survives across sessions) ──
+      const VISITOR_KEY  = 'sq_visitor_id';
+      const isRepeat     = !!localStorage.getItem(VISITOR_KEY);
+      let   visitorId    = localStorage.getItem(VISITOR_KEY);
+      if (!visitorId) {
+        visitorId = crypto.randomUUID ? crypto.randomUUID()
+          : Math.random().toString(36).slice(2) + Date.now().toString(36);
+        localStorage.setItem(VISITOR_KEY, visitorId);
+      }
+
+      // ── Per-page-load session ID ──
+      const SESSION_ID = crypto.randomUUID ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+      // ── Device type ──
+      const deviceType = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+        ? 'mobile' : 'desktop';
+
+      // ── Page load timestamp (for timeOnPage) ──
+      const PAGE_START = Date.now();
 
       function log(event, data) {
-        const payload = JSON.stringify({ sessionId: SESSION_ID, event, data: data || {} });
-        // Use sendBeacon for abandon events (fires even during page unload)
+        const payload = JSON.stringify({
+          sessionId       : SESSION_ID,
+          visitorId,
+          event,
+          deviceType,
+          isRepeatVisitor : isRepeat,
+          data            : { ...(data || {}), timeOnPage: Date.now() - PAGE_START },
+        });
         if (event === 'quiz_abandon' && navigator.sendBeacon) {
           navigator.sendBeacon(WORKER_URL, new Blob([payload], { type: 'application/json' }));
         } else {
           fetch(WORKER_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: payload,
-            keepalive: true,
-          }).catch(() => {}); // never surface analytics errors
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: payload, keepalive: true,
+          }).catch(() => {});
         }
       }
 
-      // Fire immediately on load
       log('page_view');
 
-      // Expose globally for React app
-      window.Analytics = { log, sessionId: SESSION_ID };
+      window.Analytics = { log, sessionId: SESSION_ID, visitorId, deviceType, isRepeat };
     })();
   </script>
 

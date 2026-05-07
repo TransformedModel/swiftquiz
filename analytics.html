@@ -210,8 +210,8 @@
       <div class="panel" style="overflow-x:auto">
         <table id="sessions-table">
           <thead><tr>
-            <th>Time</th><th>Location</th><th>Started</th>
-            <th>Qs reached</th><th>Result</th><th>Score</th><th>Total time</th>
+            <th>Time</th><th>Location</th><th>Device</th><th>Visitor</th>
+            <th>Qs reached</th><th>Result</th><th>Score</th><th>Quiz time</th><th>Page time</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -274,13 +274,18 @@
       'Data as of ' + new Date(d.generated).toLocaleString();
 
     // ── Cards ──
+    const uniqueV    = d.uniqueVisitors ?? d.totalSessions;
+    const repeatPct  = uniqueV > 0 ? pct(d.repeatVisitors / uniqueV) : '—';
+    const mobilePct  = uniqueV > 0 ? pct((d.mobileVisitors ?? 0) / uniqueV) : '—';
     document.getElementById('cards').innerHTML = `
-      ${card('Total Visitors',   d.totalSessions,                          '',                    'rose')}
-      ${card('Page Views',       d.totalPageViews,                         '',                    '')}
-      ${card('Quiz Starts',      d.quizStarts,                             '',                    'purple')}
-      ${card('Completions',      d.quizCompletions,                        `${pct(d.completionRate)} start rate`, 'gold')}
+      ${card('Unique Visitors',  uniqueV,                                  `${d.totalSessions} sessions total`,  'rose')}
+      ${card('New / Returning',  `${d.newVisitors ?? '—'} / ${d.repeatVisitors ?? '—'}`, `${repeatPct} returning`, '')}
+      ${card('Mobile / Desktop', `${d.mobileVisitors ?? '—'} / ${d.desktopVisitors ?? '—'}`, `${mobilePct} mobile`, 'purple')}
+      ${card('Avg Time on Page', d.avgTimeOnPageMs ? fmtMs(d.avgTimeOnPageMs) : '—', 'all sessions',           '')}
+      ${card('Quiz Starts',      d.quizStarts,                             `${pct(d.quizStarts/Math.max(1,uniqueV))} of visitors`, 'gold')}
+      ${card('Completions',      d.quizCompletions,                        `${pct(d.completionRate)} finish rate`, 'green')}
       ${card('Perfect Scores',   d.perfectScores,                          `${pct(d.perfectScores/Math.max(1,d.quizCompletions))} of completions`, 'green')}
-      ${card('Avg Score',        d.avgScore !== null ? `${d.avgScore}/15` : '—', d.avgTimeMs ? 'avg time ' + fmtMs(d.avgTimeMs) : '', '')}
+      ${card('Avg Score',        d.avgScore !== null ? `${d.avgScore}/15` : '—', d.avgTimeMs ? 'avg quiz time ' + fmtMs(d.avgTimeMs) : '', '')}
     `;
 
     // ── Drop-off chart ──
@@ -336,16 +341,21 @@
         : s.completed && s.perfect ? `<span class="tag ok">Perfect ✓</span>`
         : s.completed              ? `<span class="tag ok">Completed</span>`
         :                            `<span class="tag mid">Abandoned Q${s.questionsAnswered}</span>`;
+      const deviceIcon = s.deviceType === 'mobile' ? '📱' : s.deviceType === 'desktop' ? '💻' : '—';
+      const visitorTag = s.isRepeatVisitor === true  ? `<span class="tag mid">Returning</span>`
+                       : s.isRepeatVisitor === false ? `<span class="tag ok">New</span>` : '—';
       return `<tr>
         <td style="color:var(--dim);white-space:nowrap">${fmtDate(s.ts)}</td>
         <td>${flag(s.country)}${s.city || s.country || '—'}</td>
-        <td>${s.started ? '<span class="tag ok">Yes</span>' : '<span class="tag no">No</span>'}</td>
+        <td style="text-align:center">${deviceIcon}</td>
+        <td>${visitorTag}</td>
         <td style="color:var(--muted)">${s.started ? s.questionsAnswered + ' / 15' : '—'}</td>
         <td>${result}</td>
         <td style="color:var(--gold)">${s.score !== null ? s.score + '/15' : '—'}</td>
         <td style="color:var(--muted)">${s.totalMs ? fmtMs(s.totalMs) : '—'}</td>
+        <td style="color:var(--muted)">${s.timeOnPage ? fmtMs(s.timeOnPage) : '—'}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7" style="color:var(--dim);padding:16px">No sessions yet</td></tr>';
+    }).join('') || '<tr><td colspan="9" style="color:var(--dim);padding:16px">No sessions yet</td></tr>';
   }
 
   // ── Helpers ─────────────────────────────────────────────────

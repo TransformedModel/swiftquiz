@@ -1,7 +1,7 @@
 // =============================================================
 //  analytics-worker/index.js  —  SwiftQuiz Analytics Worker
 //
-//  POST /log   { sessionId, event, data }  — ingest an event
+//  POST /log   { sessionId, visitorId, event, deviceType, isRepeatVisitor, data }
 //  GET  /report?token=SECRET               — aggregated dashboard data
 //  GET  /health                            — smoke test
 //
@@ -37,16 +37,19 @@ export default {
 
       const cf  = request.cf || {};
       const doc = {
-        sessionId : String(body.sessionId || 'unknown').slice(0, 64),
-        event     : String(body.event     || 'unknown').slice(0, 64),
-        ts        : new Date().toISOString(),
-        city      : cf.city      ?? null,
-        country   : cf.country   ?? null,
-        region    : cf.region    ?? null,
-        timezone  : cf.timezone  ?? null,
-        latitude  : cf.latitude  ?? null,
-        longitude : cf.longitude ?? null,
-        data      : (body.data && typeof body.data === 'object') ? body.data : {},
+        sessionId       : String(body.sessionId       || 'unknown').slice(0, 64),
+        visitorId       : String(body.visitorId       || 'unknown').slice(0, 64),
+        event           : String(body.event           || 'unknown').slice(0, 64),
+        deviceType      : String(body.deviceType      || 'unknown').slice(0, 16),
+        isRepeatVisitor : !!body.isRepeatVisitor,
+        ts              : new Date().toISOString(),
+        city            : cf.city      ?? null,
+        country         : cf.country   ?? null,
+        region          : cf.region    ?? null,
+        timezone        : cf.timezone  ?? null,
+        latitude        : cf.latitude  ?? null,
+        longitude       : cf.longitude ?? null,
+        data            : (body.data && typeof body.data === 'object') ? body.data : {},
       };
 
       try { await writeEvent(doc, env); }
@@ -123,13 +126,17 @@ async function fetchAllEvents(env) {
 function aggregate(events) {
   events.sort((a, b) => (a.ts ?? '').localeCompare(b.ts ?? ''));
 
-  // Build a map of sessions
-  const sessions = new Map();
+  // Build a map of sessions and unique visitors
+  const sessions  = new Map();
+  const visitors  = new Map(); // visitorId → { isRepeat, deviceType }
+
   const getS = id => {
     if (!sessions.has(id)) sessions.set(id, {
       id, ts: null, city: null, country: null, region: null,
+      visitorId: null, deviceType: null, isRepeatVisitor: null,
       pageView: false, started: false, completed: false, abandoned: false,
       perfect: false, score: null, totalMs: null, questionsAnswered: 0,
+      timeOnPage: null,
     });
     return sessions.get(id);
   };
@@ -143,6 +150,32 @@ function aggregate(events) {
     s.city    = s.city    || e.city;
     s.country = s.country || e.country;
     s.region  = s.region  || e.region;
+
+    // Capture visitor-level fields from first event seen for this session
+    if (s.visitorId === null && e.visitorId && e.visitorId !== 'unknown') {
+      s.visitorId = e.visitorId;
+    }
+    if (s.deviceType === null && e.deviceType && e.deviceType !== 'unknown') {
+      s.deviceType = e.deviceType;
+    }
+    if (s.isRepeatVisitor === null && e.isRepeatVisitor !== undefined) {
+      s.isRepeatVisitor = !!e.isRepeatVisitor;
+    }
+
+    // Track unique visitors
+    if (e.visitorId && e.visitorId !== 'unknown') {
+      if (!visitors.has(e.visitorId)) {
+        visitors.set(e.visitorId, {
+          isRepeat   : !!e.isRepeatVisitor,
+          deviceType : e.deviceType || 'unknown',
+        });
+      }
+    }
+
+    // Track max timeOnPage per session (from any event's data.timeOnPage)
+    if (e.data?.timeOnPage > 0) {
+      s.timeOnPage = Math.max(s.timeOnPage ?? 0, e.data.timeOnPage);
+    }
 
     if (e.event === 'page_view')  s.pageView  = true;
     if (e.event === 'quiz_start') s.started   = true;
@@ -169,6 +202,32 @@ function aggregate(events) {
   const list      = Array.from(sessions.values());
   const starters  = list.filter(s => s.started);
   const completers= list.filter(s => s.completed);
+
+  // Unique visitors
+  const uniqueVisitors = visitors.size;
+
+  // Repeat vs new visitor breakdown
+  let repeatCount = 0;
+  let newCount    = 0;
+  for (const v of visitors.values()) {
+    if (v.isRepeat) repeatCount++; else newCount++;
+  }
+
+  // Device breakdown (from unique visitors)
+  let mobileCount  = 0;
+  let desktopCount = 0;
+  let unknownDevice = 0;
+  for (const v of visitors.values()) {
+    if (v.deviceType === 'mobile')       mobileCount++;
+    else if (v.deviceType === 'desktop') desktopCount++;
+    else                                 unknownDevice++;
+  }
+
+  // Avg time on page (sessions with a recorded timeOnPage)
+  const sessionsWithTime = list.filter(s => s.timeOnPage !== null && s.timeOnPage > 0);
+  const avgTimeOnPage = sessionsWithTime.length
+    ? Math.round(sessionsWithTime.reduce((a, s) => a + s.timeOnPage, 0) / sessionsWithTime.length)
+    : null;
 
   // Drop-off: how many starters answered each question
   const dropoff = Array(15).fill(0);
@@ -199,15 +258,18 @@ function aggregate(events) {
     .sort((a, b) => (b.ts ?? '').localeCompare(a.ts ?? ''))
     .slice(0, 30)
     .map(s => ({
-      ts      : s.ts,
-      country : s.country,
-      city    : s.city,
-      started : s.started,
-      completed: s.completed,
-      perfect : s.perfect,
+      ts               : s.ts,
+      country          : s.country,
+      city             : s.city,
+      deviceType       : s.deviceType,
+      isRepeatVisitor  : s.isRepeatVisitor,
+      started          : s.started,
+      completed        : s.completed,
+      perfect          : s.perfect,
       questionsAnswered: s.questionsAnswered,
-      score   : s.score,
-      totalMs : s.totalMs,
+      score            : s.score,
+      totalMs          : s.totalMs,
+      timeOnPage       : s.timeOnPage,
     }));
 
   const avgScore = completers.length
@@ -219,17 +281,23 @@ function aggregate(events) {
     : null;
 
   return {
-    generated       : new Date().toISOString(),
-    totalSessions   : list.length,
-    totalPageViews  : list.filter(s => s.pageView).length,
-    quizStarts      : starters.length,
-    quizCompletions : completers.length,
-    completionRate  : starters.length ? +(completers.length / starters.length).toFixed(3) : 0,
-    perfectScores   : list.filter(s => s.perfect).length,
+    generated        : new Date().toISOString(),
+    totalSessions    : list.length,
+    totalPageViews   : list.filter(s => s.pageView).length,
+    uniqueVisitors,
+    newVisitors      : newCount,
+    repeatVisitors   : repeatCount,
+    mobileVisitors   : mobileCount,
+    desktopVisitors  : desktopCount,
+    avgTimeOnPageMs  : avgTimeOnPage,
+    quizStarts       : starters.length,
+    quizCompletions  : completers.length,
+    completionRate   : starters.length ? +(completers.length / starters.length).toFixed(3) : 0,
+    perfectScores    : list.filter(s => s.perfect).length,
     avgScore,
-    avgTimeMs       : avgTime,
+    avgTimeMs        : avgTime,
     dropoff,
-    questionStats   : Q.map((q, i) => ({
+    questionStats    : Q.map((q, i) => ({
       index   : i,
       correct : q.correct,
       wrong   : q.wrong,
